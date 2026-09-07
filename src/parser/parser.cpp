@@ -49,6 +49,9 @@ Type Parser::parseType() {
   case TokenKind::Double:
     type.kind = TypeKind::Double;
     break;
+  case TokenKind::Identifier:
+    type.kind = TypeKind::Struct;
+    break;
   default:
     error(token, "expected a type");
     return type;
@@ -56,6 +59,30 @@ Type Parser::parseType() {
   type.name = token.lexeme;
   advance();
   return type;
+}
+StructDecl Parser::parseStruct() {
+  StructDecl declaration;
+  declaration.location = current().location;
+  expect(TokenKind::Struct, "expected 'struct'");
+  if (check(TokenKind::Identifier))
+    declaration.name = advance().lexeme;
+  else
+    error(current(), "expected struct name");
+  expect(TokenKind::LeftBrace, "expected '{' after struct name");
+  while (!check(TokenKind::RightBrace) && !check(TokenKind::Eof)) {
+    StructMember member;
+    member.location = current().location;
+    member.type = parseType();
+    if (check(TokenKind::Identifier))
+      member.name = advance().lexeme;
+    else
+      error(current(), "expected struct member name");
+    expect(TokenKind::Semicolon, "expected ';' after struct member");
+    declaration.members.push_back(std::move(member));
+  }
+  expect(TokenKind::RightBrace, "expected '}' after struct declaration");
+  expect(TokenKind::Semicolon, "expected ';' after struct declaration");
+  return declaration;
 }
 Module Parser::parse() {
   Module module;
@@ -74,7 +101,10 @@ Module Parser::parse() {
     expect(TokenKind::Semicolon, "expected ';' after import");
   }
   while (!check(TokenKind::Eof)) {
-    module.functions.push_back(parseFunction());
+    if (check(TokenKind::Struct))
+      module.structs.push_back(parseStruct());
+    else
+      module.functions.push_back(parseFunction());
   }
   return module;
 }
@@ -174,8 +204,7 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     statement->value = ContinueStmt{};
     return statement;
   }
-  if (check(TokenKind::Int) || check(TokenKind::Long) || check(TokenKind::Bool) ||
-      check(TokenKind::Char) || check(TokenKind::Float) || check(TokenKind::Double)) {
+  if (startsVariableDeclaration()) {
     VarDeclStmt result;
     result.type = parseType();
     if (check(TokenKind::Identifier))
@@ -231,6 +260,13 @@ int Parser::precedence(TokenKind kind) const {
     return 0;
   }
 }
+bool Parser::startsVariableDeclaration() const {
+  if (check(TokenKind::Int) || check(TokenKind::Long) || check(TokenKind::Bool) ||
+      check(TokenKind::Char) || check(TokenKind::Float) || check(TokenKind::Double))
+    return true;
+  return check(TokenKind::Identifier) && index_ + 1 < tokens_.size() &&
+         tokens_[index_ + 1].kind == TokenKind::Identifier;
+}
 ExprPtr Parser::parseBinary(int minimumPrecedence) {
   auto left = parseUnary();
   while (precedence(current().kind) >= minimumPrecedence) {
@@ -264,6 +300,7 @@ ExprPtr Parser::parsePrimary() {
     return node;
   }
   if (token.kind == TokenKind::Identifier) {
+    ExprPtr result;
     if (match(TokenKind::LeftParen)) {
       CallExpr call;
       call.callee = token.lexeme;
@@ -276,7 +313,15 @@ ExprPtr Parser::parsePrimary() {
       node->value = std::move(call);
     } else
       node->value = NameExpr{token.lexeme};
-    return node;
+    result = std::move(node);
+    if (match(TokenKind::Dot)) {
+      Token member = expect(TokenKind::Identifier, "expected member name after '.'");
+      auto memberNode = std::make_unique<Expr>();
+      memberNode->location = member.location;
+      memberNode->value = MemberExpr{std::move(result), member.lexeme};
+      result = std::move(memberNode);
+    }
+    return result;
   }
   if (token.kind == TokenKind::LeftParen) {
     auto expression = parseExpression();

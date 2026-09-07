@@ -19,6 +19,7 @@ private:
   const Token& expect(TokenKind kind, const char* message);
   void error(const Token& token, std::string message);
   Type parseType();
+  StructDecl parseStruct();
   Function parseFunction();
   std::unique_ptr<Stmt> parseStatement();
   std::unique_ptr<Stmt> parseBlock();
@@ -28,6 +29,7 @@ private:
   ExprPtr parseUnary();
   ExprPtr parsePrimary();
   int precedence(TokenKind kind) const;
+  bool startsVariableDeclaration() const;
   const std::vector<Token>& tokens_;
   Diagnostics& diagnostics_;
   size_t index_ = 0;

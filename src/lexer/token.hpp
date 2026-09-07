@@ -15,6 +15,7 @@ enum class TokenKind {
   Module,
   Import,
   Struct,
+  String,
   If,
   Else,
   While,

@@ -32,15 +32,15 @@ std::vector<Token> Lexer::lex(Diagnostics& diagnostics) {
   std::vector<Token> tokens;
   auto keywords = std::unordered_map<std::string, TokenKind>{
       {"module", TokenKind::Module},     {"import", TokenKind::Import},
-      {"struct", TokenKind::Struct},     {"if", TokenKind::If},
-      {"else", TokenKind::Else},         {"while", TokenKind::While},
-      {"for", TokenKind::For},           {"break", TokenKind::Break},
-      {"continue", TokenKind::Continue}, {"return", TokenKind::Return},
-      {"true", TokenKind::True},         {"false", TokenKind::False},
-      {"void", TokenKind::Void},         {"bool", TokenKind::Bool},
-      {"char", TokenKind::Char},         {"int", TokenKind::Int},
-      {"long", TokenKind::Long},         {"float", TokenKind::Float},
-      {"double", TokenKind::Double}};
+      {"struct", TokenKind::Struct},     {"string", TokenKind::String},
+      {"if", TokenKind::If},             {"else", TokenKind::Else},
+      {"while", TokenKind::While},       {"for", TokenKind::For},
+      {"break", TokenKind::Break},       {"continue", TokenKind::Continue},
+      {"return", TokenKind::Return},     {"true", TokenKind::True},
+      {"false", TokenKind::False},       {"void", TokenKind::Void},
+      {"bool", TokenKind::Bool},         {"char", TokenKind::Char},
+      {"int", TokenKind::Int},           {"long", TokenKind::Long},
+      {"float", TokenKind::Float},       {"double", TokenKind::Double}};
   while (peek()) {
     if (std::isspace(static_cast<unsigned char>(peek()))) {
       advance();

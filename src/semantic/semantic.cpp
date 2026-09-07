@@ -10,6 +10,8 @@ static std::string typeName(Type type) { return type.name.empty() ? "unknown" : 
 static bool compatible(Type expected, Type actual) {
   if (expected == actual)
     return true;
+  if (expected.kind == TypeKind::String && actual.kind == TypeKind::String)
+    return true;
   return (expected.kind == TypeKind::Float || expected.kind == TypeKind::Double) &&
          (actual.kind == TypeKind::Float || actual.kind == TypeKind::Double);
 }
@@ -54,7 +56,7 @@ Type SemanticAnalyzer::expressionType(const Expr& expression, Scope& scope) {
           if (value.kind == TokenKind::FloatLiteral)
             return {TypeKind::Double, "double"};
           if (value.kind == TokenKind::StringLiteral)
-            return {TypeKind::String, "string"};
+            return {TypeKind::String, ""};
           return {TypeKind::Int, "int"};
         }
         if constexpr (std::is_same_v<Value, NameExpr>) {
@@ -141,6 +143,8 @@ bool SemanticAnalyzer::statement(const Stmt& statementNode, Scope& scope, const 
         if constexpr (std::is_same_v<Value, VarDeclStmt>) {
           if (scope.values.contains(value.name))
             error(statementNode.location, "duplicate declaration '" + value.name + "'");
+          if (value.type.kind == TypeKind::String && value.type.name.empty())
+            value.type.name = "string";
           if (value.initializer) {
             Type actual = expressionType(*value.initializer, scope);
             if (!compatible(value.type, actual))

@@ -13,7 +13,13 @@ enum class TypeKind { Void, Bool, Char, Int, Long, Float, Double, String, Struct
 struct Type {
   TypeKind kind = TypeKind::Unknown;
   std::string name;
-  bool operator==(const Type&) const = default;
+  bool operator==(const Type& other) const {
+    if (kind != other.kind)
+      return false;
+    if (kind == TypeKind::String)
+      return true;
+    return name == other.name;
+  }
 };
 struct Expr;
 using ExprPtr = std::unique_ptr<Expr>;

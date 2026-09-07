@@ -21,6 +21,8 @@ const char* tokenKindName(TokenKind kind) {
     return "import";
   case TokenKind::Struct:
     return "struct";
+  case TokenKind::String:
+    return "string";
   case TokenKind::If:
     return "if";
   case TokenKind::Else:

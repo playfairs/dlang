@@ -35,6 +35,8 @@ static llvm::Type* llvmType(LLVMContext& context, dlang::Type type,
     return llvm::Type::getFloatTy(context);
   case TypeKind::Double:
     return llvm::Type::getDoubleTy(context);
+  case TypeKind::String:
+    return llvm::Type::getInt8PtrTy(context);
   case TypeKind::Struct: {
     auto found = structTypes.find(type.name);
     return found == structTypes.end() ? static_cast<llvm::Type*>(llvm::Type::getInt8Ty(context))
@@ -164,6 +166,8 @@ private:
             if (value.kind == TokenKind::FloatLiteral)
               return ConstantFP::get(llvm::Type::getDoubleTy(module_.getContext()),
                                      std::stod(value.value));
+            if (value.kind == TokenKind::StringLiteral)
+              return builder_.CreateGlobalStringPtr(value.value, "str");
             return ConstantInt::get(llvm::Type::getInt32Ty(module_.getContext()),
                                     std::stoll(value.value));
           }

@@ -49,6 +49,11 @@ Type Parser::parseType() {
   case TokenKind::Double:
     type.kind = TypeKind::Double;
     break;
+  case TokenKind::String:
+    type.kind = TypeKind::String;
+    type.name = "";
+    advance();
+    return type;
   case TokenKind::Identifier:
     type.kind = TypeKind::Struct;
     break;

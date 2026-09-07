@@ -5,9 +5,9 @@
 namespace dlang {
 const Token& Parser::current() const { return tokens_[index_]; }
 const Token& Parser::advance() {
-  if (!check(TokenKind::Eof))
-    ++index_;
-  return tokens_[index_ - 1];
+  if (check(TokenKind::Eof))
+    return current();
+  return tokens_[index_++];
 }
 bool Parser::check(TokenKind kind) const { return current().kind == kind; }
 bool Parser::match(TokenKind kind) {

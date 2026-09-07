@@ -20,3 +20,5 @@ test('dlang floating point', find_program('tests/floating.sh'),
   args: [dlang, meson.project_source_root() / 'examples/floating.d'])
 test('dlang for loop', find_program('tests/for.sh'),
   args: [dlang, meson.project_source_root() / 'tests/for.d'])
+test('dlang malformed input', find_program('tests/diagnostics.sh'),
+  args: [dlang, meson.project_source_root() / 'tests/malformed.d'])

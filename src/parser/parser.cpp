@@ -158,7 +158,7 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     return statement;
   }
   if (check(TokenKind::Int) || check(TokenKind::Long) || check(TokenKind::Bool) ||
-      check(TokenKind::Char)) {
+      check(TokenKind::Char) || check(TokenKind::Float) || check(TokenKind::Double)) {
     VarDeclStmt result;
     result.type = parseType();
     if (check(TokenKind::Identifier))

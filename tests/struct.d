@@ -3,7 +3,7 @@ module struct_test;
 struct Pair {
   int left;
   int right;
-}
+};
 
 int main() {
   Pair pair;

@@ -147,6 +147,23 @@ std::unique_ptr<Stmt> Parser::parseStatement() {
     statement->value = std::move(result);
     return statement;
   }
+  if (match(TokenKind::For)) {
+    ForStmt result;
+    expect(TokenKind::LeftParen, "expected '(' after for");
+    if (check(TokenKind::Semicolon))
+      advance();
+    else
+      result.initialization = parseStatement();
+    if (!check(TokenKind::Semicolon))
+      result.condition = parseExpression();
+    expect(TokenKind::Semicolon, "expected ';' after for condition");
+    if (!check(TokenKind::RightParen))
+      result.increment = parseExpression();
+    expect(TokenKind::RightParen, "expected ')' after for clauses");
+    result.body = parseStatement();
+    statement->value = std::move(result);
+    return statement;
+  }
   if (match(TokenKind::Break)) {
     expect(TokenKind::Semicolon, "expected ';' after break");
     statement->value = BreakStmt{};

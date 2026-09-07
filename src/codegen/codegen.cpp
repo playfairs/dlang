@@ -15,6 +15,7 @@
 #include <llvm/TargetParser/Host.h>
 #include <llvm/Transforms/Scalar.h>
 #include <utility>
+#include <vector>
 
 namespace dlang {
 using namespace llvm;
@@ -186,10 +187,13 @@ private:
     std::visit(
         [&](const auto& value) {
           using ValueType = std::decay_t<decltype(value)>;
-          if constexpr (std::is_same_v<ValueType, BlockStmt>)
-            for (const auto& child : value.statements)
+          if constexpr (std::is_same_v<ValueType, BlockStmt>) {
+            for (const auto& child : value.statements) {
               statement(*child);
-          else if constexpr (std::is_same_v<ValueType, VarDeclStmt>) {
+              if (builder_.GetInsertBlock()->getTerminator())
+                break;
+            }
+          } else if constexpr (std::is_same_v<ValueType, VarDeclStmt>) {
             auto* slot = builder_.CreateAlloca(llvmType(module_.getContext(), value.type), nullptr,
                                                value.name);
             values_[value.name] = slot;
@@ -228,11 +232,43 @@ private:
             builder_.CreateBr(condition);
             builder_.SetInsertPoint(condition);
             builder_.CreateCondBr(expression(*value.condition), body, end);
+            loops_.push_back({condition, end});
             builder_.SetInsertPoint(body);
             statement(*value.body);
+            loops_.pop_back();
             if (!builder_.GetInsertBlock()->getTerminator())
               builder_.CreateBr(condition);
             builder_.SetInsertPoint(end);
+          } else if constexpr (std::is_same_v<ValueType, ForStmt>) {
+            if (value.initialization)
+              statement(*value.initialization);
+            auto *condition = BasicBlock::Create(module_.getContext(), "for.cond", current_),
+                 *body = BasicBlock::Create(module_.getContext(), "for.body", current_),
+                 *increment = BasicBlock::Create(module_.getContext(), "for.increment", current_),
+                 *end = BasicBlock::Create(module_.getContext(), "for.end", current_);
+            builder_.CreateBr(condition);
+            builder_.SetInsertPoint(condition);
+            Value* conditionValue = value.condition ? expression(*value.condition)
+                                                    : ConstantInt::getTrue(module_.getContext());
+            builder_.CreateCondBr(conditionValue, body, end);
+            loops_.push_back({increment, end});
+            builder_.SetInsertPoint(body);
+            statement(*value.body);
+            if (!builder_.GetInsertBlock()->getTerminator())
+              builder_.CreateBr(increment);
+            builder_.SetInsertPoint(increment);
+            if (value.increment)
+              expression(*value.increment);
+            if (!builder_.GetInsertBlock()->getTerminator())
+              builder_.CreateBr(condition);
+            loops_.pop_back();
+            builder_.SetInsertPoint(end);
+          } else if constexpr (std::is_same_v<ValueType, BreakStmt>) {
+            if (!loops_.empty())
+              builder_.CreateBr(loops_.back().breakTarget);
+          } else if constexpr (std::is_same_v<ValueType, ContinueStmt>) {
+            if (!loops_.empty())
+              builder_.CreateBr(loops_.back().continueTarget);
           }
         },
         statementNode.value);
@@ -242,6 +278,11 @@ private:
   const dlang::Function& function_;
   llvm::Function* current_ = nullptr;
   std::unordered_map<std::string, AllocaInst*> values_;
+  struct LoopTargets {
+    BasicBlock* continueTarget;
+    BasicBlock* breakTarget;
+  };
+  std::vector<LoopTargets> loops_;
 };
 CodeGenerator::CodeGenerator(const Module& ast, const SemanticAnalyzer& semantic,
                              unsigned optimization, Diagnostics& diagnostics)

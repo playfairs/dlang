@@ -18,3 +18,5 @@ dlang = executable('dlang', sources, include_directories: inc, dependencies: llv
 test('dlang check', dlang, args: ['--check', meson.project_source_root() / 'examples/hello.d'])
 test('dlang floating point', find_program('tests/floating.sh'),
   args: [dlang, meson.project_source_root() / 'examples/floating.d'])
+test('dlang for loop', find_program('tests/for.sh'),
+  args: [dlang, meson.project_source_root() / 'tests/for.d'])

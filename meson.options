@@ -1,0 +1,1 @@
+option('llvm_target', type: 'string', value: 'native', description: 'LLVM target triple')

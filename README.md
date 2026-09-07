@@ -4,7 +4,7 @@ A D compiler written in C++
 
 ## Status
 
-The initial vertical slice supports modules, imports as parsed declarations, integer/boolean/character/string literals, variables, functions, calls, arithmetic and comparisons, blocks, `if`, `while`, `return`, and LLVM IR/native executable generation. Unsupported D features are diagnosed rather than silently accepted.
+The current compiler supports modules, imports as parsed declarations, integer/floating-point/boolean/character/string literals, variables, functions, calls, arithmetic and comparisons, blocks, `if`, `while`, `for`, `break`, `continue`, `return`, and LLVM IR/native executable generation. Floating-point arithmetic is lowered to LLVM floating-point instructions, and loop control is lowered to explicit control-flow targets. Unsupported D features are diagnosed rather than silently accepted.
 
 ## Build
 
@@ -33,4 +33,4 @@ The driver parses options and coordinates source loading, lexing, recursive-desc
 
 ## Limitations
 
-This is an early compiler slice. Floating-point code generation, aggregate types, imports across files, runtime/string support, and the wider D type system are not yet implemented. The supported subset is intentionally diagnosed when a feature is outside the implemented pipeline.
+This is an early compiler slice. Aggregate types, imports across files, runtime/string support, and the wider D type system are not yet implemented. The supported subset is intentionally diagnosed when a feature is outside the implemented pipeline.

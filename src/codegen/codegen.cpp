@@ -19,7 +19,9 @@
 
 namespace dlang {
 using namespace llvm;
-static llvm::Type* llvmType(LLVMContext& context, dlang::Type type) {
+using StructTypes = std::unordered_map<std::string, llvm::StructType*>;
+static llvm::Type* llvmType(LLVMContext& context, dlang::Type type,
+                            const StructTypes& structTypes) {
   switch (type.kind) {
   case TypeKind::Void:
     return llvm::Type::getVoidTy(context);
@@ -33,21 +35,28 @@ static llvm::Type* llvmType(LLVMContext& context, dlang::Type type) {
     return llvm::Type::getFloatTy(context);
   case TypeKind::Double:
     return llvm::Type::getDoubleTy(context);
+  case TypeKind::Struct: {
+    auto found = structTypes.find(type.name);
+    return found == structTypes.end() ? static_cast<llvm::Type*>(llvm::Type::getInt8Ty(context))
+                                      : static_cast<llvm::Type*>(found->second);
+  }
   default:
     return llvm::Type::getInt32Ty(context);
   }
 }
 class FunctionEmitter {
 public:
-  FunctionEmitter(LLVMContext& context, llvm::Module& module, const dlang::Function& function)
-      : builder_(context), module_(module), function_(function) {}
+  FunctionEmitter(LLVMContext& context, llvm::Module& module, const Module& ast,
+                  const dlang::Function& function, const StructTypes& structTypes)
+      : builder_(context), module_(module), ast_(ast), function_(function),
+        structTypes_(structTypes) {}
   void emit() {
     std::vector<llvm::Type*> parameters;
     for (const auto& parameter : function_.parameters)
-      parameters.push_back(llvmType(module_.getContext(), parameter.type));
+      parameters.push_back(llvmType(module_.getContext(), parameter.type, structTypes_));
     auto* llvmFunction = llvm::Function::Create(
-        llvm::FunctionType::get(llvmType(module_.getContext(), function_.returnType), parameters,
-                                false),
+        llvm::FunctionType::get(llvmType(module_.getContext(), function_.returnType, structTypes_),
+                                parameters, false),
         llvm::Function::ExternalLinkage, function_.name, &module_);
     current_ = llvmFunction;
     auto* entry = BasicBlock::Create(module_.getContext(), "entry", llvmFunction);
@@ -55,16 +64,18 @@ public:
     unsigned index = 0;
     for (auto& argument : llvmFunction->args()) {
       const auto& parameter = function_.parameters[index++];
-      auto* slot = builder_.CreateAlloca(llvmType(module_.getContext(), parameter.type), nullptr,
-                                         parameter.name);
+      auto* slot = builder_.CreateAlloca(
+          llvmType(module_.getContext(), parameter.type, structTypes_), nullptr, parameter.name);
       builder_.CreateStore(&argument, slot);
       values_[parameter.name] = slot;
+      valueTypes_[parameter.name] = parameter.type;
     }
     statement(*function_.body);
     if (!builder_.GetInsertBlock()->getTerminator())
-      builder_.CreateRet(function_.returnType.kind == TypeKind::Void
-                             ? nullptr
-                             : zeroValue(llvmType(module_.getContext(), function_.returnType)));
+      builder_.CreateRet(
+          function_.returnType.kind == TypeKind::Void
+              ? nullptr
+              : zeroValue(llvmType(module_.getContext(), function_.returnType, structTypes_)));
   }
 
 private:
@@ -92,6 +103,56 @@ private:
       return llvm::Type::getDoubleTy(module_.getContext());
     return llvm::Type::getFloatTy(module_.getContext());
   }
+  const StructMember* findMember(const MemberExpr& member) const {
+    const auto* name = std::get_if<NameExpr>(&member.object->value);
+    if (!name)
+      return nullptr;
+    auto valueType = valueTypes_.find(name->name);
+    if (valueType == valueTypes_.end())
+      return nullptr;
+    for (const auto& declaration : ast_.structs)
+      if (declaration.name == valueType->second.name)
+        for (const auto& field : declaration.members)
+          if (field.name == member.member)
+            return &field;
+    return nullptr;
+  }
+  Value* address(const Expr& expressionNode) {
+    return std::visit(
+        [&](const auto& value) -> Value* {
+          using ValueType = std::decay_t<decltype(value)>;
+          if constexpr (std::is_same_v<ValueType, NameExpr>)
+            return values_.at(value.name);
+          if constexpr (std::is_same_v<ValueType, MemberExpr>) {
+            const auto* name = std::get_if<NameExpr>(&value.object->value);
+            const StructMember* member = findMember(value);
+            if (!name || !member)
+              return nullptr;
+            auto objectType = valueTypes_.at(name->name);
+            auto structure = structTypes_.at(objectType.name);
+            size_t index = 0;
+            for (const auto& declaration : ast_.structs)
+              if (declaration.name == objectType.name)
+                for (const auto& field : declaration.members) {
+                  if (field.name == member->name)
+                    return builder_.CreateStructGEP(structure, values_.at(name->name), index,
+                                                    member->name);
+                  ++index;
+                }
+          }
+          return nullptr;
+        },
+        expressionNode.value);
+  }
+  llvm::Type* targetType(const Expr& expressionNode) {
+    if (const auto* name = std::get_if<NameExpr>(&expressionNode.value))
+      return values_.at(name->name)->getAllocatedType();
+    if (const auto* member = std::get_if<MemberExpr>(&expressionNode.value)) {
+      const auto* field = findMember(*member);
+      return field ? llvmType(module_.getContext(), field->type, structTypes_) : nullptr;
+    }
+    return nullptr;
+  }
   Value* expression(const Expr& expressionNode) {
     return std::visit(
         [&](const auto& value) -> Value* {
@@ -109,6 +170,11 @@ private:
           if constexpr (std::is_same_v<ValueType, NameExpr>)
             return builder_.CreateLoad(values_[value.name]->getAllocatedType(), values_[value.name],
                                        value.name);
+          if constexpr (std::is_same_v<ValueType, MemberExpr>) {
+            llvm::Type* type = targetType(expressionNode);
+            return type ? builder_.CreateLoad(type, address(expressionNode), value.member)
+                        : nullptr;
+          }
           if constexpr (std::is_same_v<ValueType, UnaryExpr>) {
             Value* operand = expression(*value.operand);
             if (value.op == TokenKind::Bang)
@@ -119,10 +185,10 @@ private:
           }
           if constexpr (std::is_same_v<ValueType, BinaryExpr>) {
             if (value.op == TokenKind::Equal) {
-              auto* name = std::get_if<NameExpr>(&value.left->value);
-              Value* right =
-                  convert(expression(*value.right), values_[name->name]->getAllocatedType());
-              builder_.CreateStore(right, values_[name->name]);
+              Value* target = address(*value.left);
+              llvm::Type* type = targetType(*value.left);
+              Value* right = convert(expression(*value.right), type);
+              builder_.CreateStore(right, target);
               return right;
             }
             Value *left = expression(*value.left), *right = expression(*value.right);
@@ -194,19 +260,21 @@ private:
                 break;
             }
           } else if constexpr (std::is_same_v<ValueType, VarDeclStmt>) {
-            auto* slot = builder_.CreateAlloca(llvmType(module_.getContext(), value.type), nullptr,
-                                               value.name);
+            auto* slot = builder_.CreateAlloca(
+                llvmType(module_.getContext(), value.type, structTypes_), nullptr, value.name);
             values_[value.name] = slot;
+            valueTypes_[value.name] = value.type;
             if (value.initializer)
               builder_.CreateStore(
                   convert(expression(*value.initializer), slot->getAllocatedType()), slot);
           } else if constexpr (std::is_same_v<ValueType, ExprStmt>)
             expression(*value.expression);
           else if constexpr (std::is_same_v<ValueType, ReturnStmt>)
-            builder_.CreateRet(value.expression
-                                   ? convert(expression(*value.expression),
-                                             llvmType(module_.getContext(), function_.returnType))
-                                   : nullptr);
+            builder_.CreateRet(
+                value.expression
+                    ? convert(expression(*value.expression),
+                              llvmType(module_.getContext(), function_.returnType, structTypes_))
+                    : nullptr);
           else if constexpr (std::is_same_v<ValueType, IfStmt>) {
             auto *thenBlock = BasicBlock::Create(module_.getContext(), "if.then", current_),
                  *merge = BasicBlock::Create(module_.getContext(), "if.end", current_);
@@ -275,9 +343,12 @@ private:
   }
   IRBuilder<> builder_;
   llvm::Module& module_;
+  const Module& ast_;
   const dlang::Function& function_;
+  const StructTypes& structTypes_;
   llvm::Function* current_ = nullptr;
   std::unordered_map<std::string, AllocaInst*> values_;
+  std::unordered_map<std::string, dlang::Type> valueTypes_;
   struct LoopTargets {
     BasicBlock* continueTarget;
     BasicBlock* breakTarget;
@@ -295,8 +366,17 @@ bool CodeGenerator::emit(const std::string& output, bool emitLLVM, bool objectOn
   InitializeNativeTargetAsmPrinter();
   LLVMContext context;
   auto module = std::make_unique<llvm::Module>(ast_.name.empty() ? "dlang" : ast_.name, context);
+  StructTypes structTypes;
+  for (const auto& declaration : ast_.structs)
+    structTypes[declaration.name] = StructType::create(context, declaration.name);
+  for (const auto& declaration : ast_.structs) {
+    std::vector<llvm::Type*> fields;
+    for (const auto& member : declaration.members)
+      fields.push_back(llvmType(context, member.type, structTypes));
+    structTypes.at(declaration.name)->setBody(fields, false);
+  }
   for (const auto& function : ast_.functions)
-    FunctionEmitter(context, *module, function).emit();
+    FunctionEmitter(context, *module, ast_, function, structTypes).emit();
   if (verifyModule(*module, &errs())) {
     diagnostics_.push_back({Severity::Error, {"<llvm>", 1, 1}, "LLVM module verification failed"});
     return false;

@@ -9,7 +9,7 @@
 
 namespace dlang {
 
-enum class TypeKind { Void, Bool, Char, Int, Long, Float, Double, String, Unknown };
+enum class TypeKind { Void, Bool, Char, Int, Long, Float, Double, String, Struct, Unknown };
 struct Type {
   TypeKind kind = TypeKind::Unknown;
   std::string name;
@@ -37,9 +37,13 @@ struct CallExpr {
   std::string callee;
   std::vector<ExprPtr> arguments;
 };
+struct MemberExpr {
+  ExprPtr object;
+  std::string member;
+};
 struct Expr {
   SourceLocation location;
-  std::variant<Literal, NameExpr, UnaryExpr, BinaryExpr, CallExpr> value;
+  std::variant<Literal, NameExpr, UnaryExpr, BinaryExpr, CallExpr, MemberExpr> value;
 };
 using StmtPtr = std::unique_ptr<struct Stmt>;
 struct BlockStmt {
@@ -84,6 +88,16 @@ struct Parameter {
   std::string name;
   SourceLocation location;
 };
+struct StructMember {
+  Type type;
+  std::string name;
+  SourceLocation location;
+};
+struct StructDecl {
+  std::string name;
+  std::vector<StructMember> members;
+  SourceLocation location;
+};
 struct Function {
   Type returnType;
   std::string name;
@@ -94,6 +108,7 @@ struct Function {
 struct Module {
   std::string name;
   std::vector<std::string> imports;
+  std::vector<StructDecl> structs;
   std::vector<Function> functions;
 };
 

@@ -1,0 +1,9 @@
+module frontend;
+
+int add(int left, int right) {
+  return left + right;
+}
+
+int main() {
+  return add(20, 22);
+}

@@ -24,6 +24,24 @@ Type SemanticAnalyzer::lookup(const std::string& name, Scope& scope) {
   }
   return {};
 }
+Type SemanticAnalyzer::memberType(const MemberExpr& member, Scope& scope,
+                                  const SourceLocation& location) {
+  Type object = expressionType(*member.object, scope);
+  if (object.kind != TypeKind::Struct) {
+    error(location, "member access requires a struct value");
+    return {};
+  }
+  auto declaration = structs_.find(object.name);
+  if (declaration == structs_.end()) {
+    error(location, "unknown struct type '" + object.name + "'");
+    return {};
+  }
+  for (const auto& field : declaration->second->members)
+    if (field.name == member.member)
+      return field.type;
+  error(location, "struct '" + object.name + "' has no member '" + member.member + "'");
+  return {};
+}
 Type SemanticAnalyzer::expressionType(const Expr& expression, Scope& scope) {
   return std::visit(
       [&](const auto& value) -> Type {
@@ -45,6 +63,8 @@ Type SemanticAnalyzer::expressionType(const Expr& expression, Scope& scope) {
             error(expression.location, "undefined identifier '" + value.name + "'");
           return type;
         }
+        if constexpr (std::is_same_v<Value, MemberExpr>)
+          return memberType(value, scope, expression.location);
         if constexpr (std::is_same_v<Value, UnaryExpr>) {
           Type type = expressionType(*value.operand, scope);
           if (value.op == TokenKind::Bang) {
@@ -63,7 +83,7 @@ Type SemanticAnalyzer::expressionType(const Expr& expression, Scope& scope) {
             if (const auto* name = std::get_if<NameExpr>(&value.left->value)) {
               if (lookup(name->name, scope).kind == TypeKind::Unknown)
                 error(value.left->location, "undefined identifier '" + name->name + "'");
-            } else
+            } else if (!std::holds_alternative<MemberExpr>(value.left->value))
               error(expression.location, "left side of assignment must be an identifier");
             if (!compatible(left, right) && left.kind != TypeKind::Unknown &&
                 right.kind != TypeKind::Unknown)
@@ -127,6 +147,8 @@ bool SemanticAnalyzer::statement(const Stmt& statementNode, Scope& scope, const 
               error(statementNode.location,
                     "cannot initialize '" + value.name + "' with incompatible type");
           }
+          if (value.type.kind == TypeKind::Struct && !structs_.contains(value.type.name))
+            error(statementNode.location, "unknown struct type '" + value.type.name + "'");
           scope.values[value.name] = value.type;
           return true;
         }
@@ -180,6 +202,17 @@ bool SemanticAnalyzer::statement(const Stmt& statementNode, Scope& scope, const 
       statementNode.value);
 }
 bool SemanticAnalyzer::analyze(const Module& module) {
+  for (const auto& declaration : module.structs) {
+    if (structs_.contains(declaration.name))
+      error(declaration.location, "duplicate declaration '" + declaration.name + "'");
+    structs_[declaration.name] = &declaration;
+    std::unordered_map<std::string, bool> members;
+    for (const auto& member : declaration.members) {
+      if (members.contains(member.name))
+        error(member.location, "duplicate struct member '" + member.name + "'");
+      members[member.name] = true;
+    }
+  }
   for (const auto& function : module.functions) {
     if (functions_.contains(function.name))
       error(function.location, "duplicate declaration '" + function.name + "'");

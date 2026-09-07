@@ -24,8 +24,10 @@ private:
   Type expressionType(const Expr& expression, Scope& scope);
   bool statement(const Stmt& statement, Scope& scope, const Type& returnType, bool inLoop);
   Type lookup(const std::string& name, Scope& scope);
+  Type memberType(const MemberExpr& member, Scope& scope, const SourceLocation& location);
   void error(const SourceLocation& location, std::string message);
   Diagnostics& diagnostics_;
+  std::unordered_map<std::string, const StructDecl*> structs_;
   std::unordered_map<std::string, FunctionInfo> functions_;
 };
 

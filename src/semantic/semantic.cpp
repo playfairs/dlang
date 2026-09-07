@@ -7,6 +7,12 @@ static bool numeric(TypeKind kind) {
          kind == TypeKind::Double || kind == TypeKind::Char;
 }
 static std::string typeName(Type type) { return type.name.empty() ? "unknown" : type.name; }
+static bool compatible(Type expected, Type actual) {
+  if (expected == actual)
+    return true;
+  return (expected.kind == TypeKind::Float || expected.kind == TypeKind::Double) &&
+         (actual.kind == TypeKind::Float || actual.kind == TypeKind::Double);
+}
 void SemanticAnalyzer::error(const SourceLocation& location, std::string message) {
   diagnostics_.push_back({Severity::Error, location, std::move(message)});
 }
@@ -59,7 +65,8 @@ Type SemanticAnalyzer::expressionType(const Expr& expression, Scope& scope) {
                 error(value.left->location, "undefined identifier '" + name->name + "'");
             } else
               error(expression.location, "left side of assignment must be an identifier");
-            if (left != right && left.kind != TypeKind::Unknown && right.kind != TypeKind::Unknown)
+            if (!compatible(left, right) && left.kind != TypeKind::Unknown &&
+                right.kind != TypeKind::Unknown)
               error(expression.location,
                     "cannot assign '" + typeName(right) + "' to '" + typeName(left) + "'");
             return left;
@@ -72,7 +79,7 @@ Type SemanticAnalyzer::expressionType(const Expr& expression, Scope& scope) {
           if (value.op == TokenKind::EqualEqual || value.op == TokenKind::BangEqual ||
               value.op == TokenKind::Less || value.op == TokenKind::LessEqual ||
               value.op == TokenKind::Greater || value.op == TokenKind::GreaterEqual) {
-            if (left != right)
+            if (!compatible(left, right))
               error(expression.location, "comparison operands must have matching types");
             return {TypeKind::Bool, "bool"};
           }
@@ -91,7 +98,7 @@ Type SemanticAnalyzer::expressionType(const Expr& expression, Scope& scope) {
           else
             for (size_t i = 0; i < value.arguments.size(); ++i) {
               Type actual = expressionType(*value.arguments[i], scope);
-              if (actual != found->second.parameters[i])
+              if (!compatible(found->second.parameters[i], actual))
                 error(value.arguments[i]->location, "argument type does not match parameter");
             }
           return found->second.returnType;
@@ -116,7 +123,7 @@ bool SemanticAnalyzer::statement(const Stmt& statementNode, Scope& scope, const 
             error(statementNode.location, "duplicate declaration '" + value.name + "'");
           if (value.initializer) {
             Type actual = expressionType(*value.initializer, scope);
-            if (actual != value.type)
+            if (!compatible(value.type, actual))
               error(statementNode.location,
                     "cannot initialize '" + value.name + "' with incompatible type");
           }
@@ -130,7 +137,7 @@ bool SemanticAnalyzer::statement(const Stmt& statementNode, Scope& scope, const 
         if constexpr (std::is_same_v<Value, ReturnStmt>) {
           Type actual = value.expression ? expressionType(*value.expression, scope)
                                          : Type{TypeKind::Void, "void"};
-          if (actual != returnType)
+          if (!compatible(returnType, actual))
             error(statementNode.location, "return type does not match function return type");
           return true;
         }

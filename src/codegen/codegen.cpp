@@ -28,6 +28,10 @@ static llvm::Type* llvmType(LLVMContext& context, dlang::Type type) {
     return llvm::Type::getInt8Ty(context);
   case TypeKind::Long:
     return llvm::Type::getInt64Ty(context);
+  case TypeKind::Float:
+    return llvm::Type::getFloatTy(context);
+  case TypeKind::Double:
+    return llvm::Type::getDoubleTy(context);
   default:
     return llvm::Type::getInt32Ty(context);
   }
@@ -57,13 +61,36 @@ public:
     }
     statement(*function_.body);
     if (!builder_.GetInsertBlock()->getTerminator())
-      builder_.CreateRet(
-          function_.returnType.kind == TypeKind::Void
-              ? nullptr
-              : ConstantInt::get(llvmType(module_.getContext(), function_.returnType), 0));
+      builder_.CreateRet(function_.returnType.kind == TypeKind::Void
+                             ? nullptr
+                             : zeroValue(llvmType(module_.getContext(), function_.returnType)));
   }
 
 private:
+  Value* zeroValue(llvm::Type* type) {
+    if (type->isFloatingPointTy())
+      return ConstantFP::get(type, 0.0);
+    return ConstantInt::get(type, 0);
+  }
+  Value* convert(Value* value, llvm::Type* target) {
+    llvm::Type* source = value->getType();
+    if (source == target)
+      return value;
+    if (source->isFloatingPointTy() && target->isFloatingPointTy())
+      return source->getPrimitiveSizeInBits() < target->getPrimitiveSizeInBits()
+                 ? builder_.CreateFPExt(value, target)
+                 : builder_.CreateFPTrunc(value, target);
+    if (source->isIntegerTy() && target->isFloatingPointTy())
+      return builder_.CreateSIToFP(value, target);
+    return value;
+  }
+  llvm::Type* commonFloatingType(Value* left, Value* right) {
+    if (!left->getType()->isFloatingPointTy() && !right->getType()->isFloatingPointTy())
+      return nullptr;
+    if (left->getType()->isDoubleTy() || right->getType()->isDoubleTy())
+      return llvm::Type::getDoubleTy(module_.getContext());
+    return llvm::Type::getFloatTy(module_.getContext());
+  }
   Value* expression(const Expr& expressionNode) {
     return std::visit(
         [&](const auto& value) -> Value* {
@@ -72,6 +99,9 @@ private:
             if (value.kind == TokenKind::True || value.kind == TokenKind::False)
               return ConstantInt::get(llvm::Type::getInt1Ty(module_.getContext()),
                                       value.kind == TokenKind::True);
+            if (value.kind == TokenKind::FloatLiteral)
+              return ConstantFP::get(llvm::Type::getDoubleTy(module_.getContext()),
+                                     std::stod(value.value));
             return ConstantInt::get(llvm::Type::getInt32Ty(module_.getContext()),
                                     std::stoll(value.value));
           }
@@ -89,34 +119,50 @@ private:
           if constexpr (std::is_same_v<ValueType, BinaryExpr>) {
             if (value.op == TokenKind::Equal) {
               auto* name = std::get_if<NameExpr>(&value.left->value);
-              Value* right = expression(*value.right);
+              Value* right =
+                  convert(expression(*value.right), values_[name->name]->getAllocatedType());
               builder_.CreateStore(right, values_[name->name]);
               return right;
             }
             Value *left = expression(*value.left), *right = expression(*value.right);
+            if (llvm::Type* floatingType = commonFloatingType(left, right)) {
+              left = convert(left, floatingType);
+              right = convert(right, floatingType);
+            }
             switch (value.op) {
             case TokenKind::Plus:
-              return builder_.CreateAdd(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFAdd(left, right)
+                                                          : builder_.CreateAdd(left, right);
             case TokenKind::Minus:
-              return builder_.CreateSub(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFSub(left, right)
+                                                          : builder_.CreateSub(left, right);
             case TokenKind::Star:
-              return builder_.CreateMul(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFMul(left, right)
+                                                          : builder_.CreateMul(left, right);
             case TokenKind::Slash:
-              return builder_.CreateSDiv(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFDiv(left, right)
+                                                          : builder_.CreateSDiv(left, right);
             case TokenKind::Percent:
-              return builder_.CreateSRem(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFRem(left, right)
+                                                          : builder_.CreateSRem(left, right);
             case TokenKind::EqualEqual:
-              return builder_.CreateICmpEQ(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFCmpOEQ(left, right)
+                                                          : builder_.CreateICmpEQ(left, right);
             case TokenKind::BangEqual:
-              return builder_.CreateICmpNE(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFCmpONE(left, right)
+                                                          : builder_.CreateICmpNE(left, right);
             case TokenKind::Less:
-              return builder_.CreateICmpSLT(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFCmpOLT(left, right)
+                                                          : builder_.CreateICmpSLT(left, right);
             case TokenKind::LessEqual:
-              return builder_.CreateICmpSLE(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFCmpOLE(left, right)
+                                                          : builder_.CreateICmpSLE(left, right);
             case TokenKind::Greater:
-              return builder_.CreateICmpSGT(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFCmpOGT(left, right)
+                                                          : builder_.CreateICmpSGT(left, right);
             case TokenKind::GreaterEqual:
-              return builder_.CreateICmpSGE(left, right);
+              return left->getType()->isFloatingPointTy() ? builder_.CreateFCmpOGE(left, right)
+                                                          : builder_.CreateICmpSGE(left, right);
             case TokenKind::AmpAmp:
               return builder_.CreateAnd(left, right);
             case TokenKind::PipePipe:
@@ -128,8 +174,9 @@ private:
           if constexpr (std::is_same_v<ValueType, CallExpr>) {
             auto* callee = module_.getFunction(value.callee);
             std::vector<Value*> args;
-            for (const auto& argument : value.arguments)
-              args.push_back(expression(*argument));
+            for (size_t index = 0; index < value.arguments.size(); ++index)
+              args.push_back(convert(expression(*value.arguments[index]),
+                                     callee->getFunctionType()->getParamType(index)));
             return builder_.CreateCall(callee, args);
           }
         },
@@ -147,11 +194,15 @@ private:
                                                value.name);
             values_[value.name] = slot;
             if (value.initializer)
-              builder_.CreateStore(expression(*value.initializer), slot);
+              builder_.CreateStore(
+                  convert(expression(*value.initializer), slot->getAllocatedType()), slot);
           } else if constexpr (std::is_same_v<ValueType, ExprStmt>)
             expression(*value.expression);
           else if constexpr (std::is_same_v<ValueType, ReturnStmt>)
-            builder_.CreateRet(value.expression ? expression(*value.expression) : nullptr);
+            builder_.CreateRet(value.expression
+                                   ? convert(expression(*value.expression),
+                                             llvmType(module_.getContext(), function_.returnType))
+                                   : nullptr);
           else if constexpr (std::is_same_v<ValueType, IfStmt>) {
             auto *thenBlock = BasicBlock::Create(module_.getContext(), "if.then", current_),
                  *merge = BasicBlock::Create(module_.getContext(), "if.end", current_);

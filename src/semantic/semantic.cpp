@@ -157,6 +157,20 @@ bool SemanticAnalyzer::statement(const Stmt& statementNode, Scope& scope, const 
           statement(*value.body, scope, returnType, true);
           return true;
         }
+        if constexpr (std::is_same_v<Value, ForStmt>) {
+          Scope loopScope{{}, &scope};
+          if (value.initialization)
+            statement(*value.initialization, loopScope, returnType, inLoop);
+          if (value.condition) {
+            Type condition = expressionType(*value.condition, loopScope);
+            if (condition.kind != TypeKind::Bool)
+              error(value.condition->location, "for condition must be bool");
+          }
+          if (value.increment)
+            expressionType(*value.increment, loopScope);
+          statement(*value.body, loopScope, returnType, true);
+          return true;
+        }
         if constexpr (std::is_same_v<Value, BreakStmt> || std::is_same_v<Value, ContinueStmt>) {
           if (!inLoop)
             error(statementNode.location, "loop control statement outside a loop");

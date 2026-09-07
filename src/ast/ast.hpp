@@ -65,11 +65,17 @@ struct WhileStmt {
   ExprPtr condition;
   StmtPtr body;
 };
+struct ForStmt {
+  StmtPtr initialization;
+  ExprPtr condition;
+  ExprPtr increment;
+  StmtPtr body;
+};
 struct BreakStmt {};
 struct ContinueStmt {};
 struct Stmt {
   SourceLocation location;
-  std::variant<BlockStmt, VarDeclStmt, ExprStmt, ReturnStmt, IfStmt, WhileStmt, BreakStmt,
+  std::variant<BlockStmt, VarDeclStmt, ExprStmt, ReturnStmt, IfStmt, WhileStmt, ForStmt, BreakStmt,
                ContinueStmt>
       value;
 };
